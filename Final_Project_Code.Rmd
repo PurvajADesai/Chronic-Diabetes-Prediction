@@ -1,0 +1,363 @@
+```{r}
+library(corrplot)
+library(caret)
+library(tree)
+library(e1071)
+library(randomForest)
+library(partykit)
+library(tidyverse)
+library(ggplot2)
+library(GGally)
+library(dplyr)
+library(gridExtra)
+library(rpart.plot)
+library(e1071)
+library(mice)
+library(caTools)
+library(pROC)
+library(Hmisc)
+```
+
+```{r}
+data <- read.csv('D:/MS Materials/Books - Learning Materials/Lecture Notes/Sem 2/DPA/Project/diabetes.csv')
+```
+
+```{r}
+str(data)
+```
+Variable Description
+
+pregnant : Number of times pregnant
+glucose : Plasma glucose concentration (glucose tolerance test)
+triceps : Triceps skin fold thickness (mm Hg)
+insulin : 2-hour serum insulin (mu U/ml)
+mass : Body mass index (weight in kg/(height in m)^2)
+pedigree : Diabetes pedigree function
+age : Age (years)
+diabetes : Test for diabetes
+
+
+
+We inspect whether there is any missing value of our observation
+```{r}
+colSums(is.na(data))
+```
+There is no missing data of our dataframe so we could proceed to the next step.
+
+
+
+
+Basic Exploratory Data Analysis
+
+```{r}
+data$Outcome <- factor(make.names(data$Outcome))
+biological_data <- data[,setdiff(names(data), c('Outcome', 'Pregnancies'))]
+features_miss_num <- apply(biological_data, 2, function(x) sum(x<=0))
+features_miss <- names(biological_data)[ features_miss_num > 0]
+features_miss_num
+```
+
+```{r}
+rows_errors <- apply(biological_data, 1, function(x) sum(x<=0)>1) 
+sum(rows_errors)
+```
+
+```{r}
+sum(rows_errors)/nrow(data)
+```
+
+
+```{r}
+biological_data[biological_data<=0] <- NA
+data[, names(biological_data)] <- biological_data
+data_original <- data
+data[,-9] <- with(data[,-9], impute(data[,-9],fun=median))
+```
+
+
+```{r}
+prop.table(table(data$Outcome))
+```
+
+```{r}
+correlat <- cor(data[, setdiff(names(data), 'Outcome')])
+corrplot(correlat)
+```
+
+```{r}
+univar_graph <- function(univar_name, univar, data, output_var) {
+  g_1 <- ggplot(data, aes(x=univar)) + geom_density() + xlab(univar_name)
+  g_2 <- ggplot(data, aes(x=univar, fill=output_var)) + geom_density(alpha=0.4) + xlab(univar_name)
+  grid.arrange(g_1, g_2, ncol=2, top=paste(univar_name,"variable", "/ [ Skew:",skewness(univar),"]"))
+}
+
+for (x in 1:(ncol(data)-1)) {
+  univar_graph(names(data)[x], data[,x], data, data[,'Outcome'])
+}
+```
+
+
+
+
+
+
+
+
+
+```{r}
+GGally::ggcorr(data[,-9], hjust = 1, layout.exp = 2, label = T, label_size = 2.9)
+```
+
+There is no strong correlation among predictor variables
+
+
+```{r}
+pairs(data, panel = panel.smooth)
+```
+
+
+```{r}
+data$Age_Cat <- ifelse(data$Age < 21, "<21", 
+                   ifelse((data$Age>=21) & (data$Age<=25), "21-25", 
+                   ifelse((data$Age>25) & (data$Age<=30), "25-30",
+                   ifelse((data$Age>30) & (data$Age<=35), "30-35",
+                   ifelse((data$Age>35) & (data$Age<=40), "35-40",
+                   ifelse((data$Age>40) & (data$Age<=50), "40-50",
+                   ifelse((data$Age>50) & (data$Age<=60), "50-60",">60")))))))
+
+data$Age_Cat <- factor(data$Age_Cat, levels = c('<21','21-25','25-30','30-35','35-40','40-50','50-60','>60'))
+table(data$Age_Cat)
+```
+
+
+```{r}
+# Histogram of Age
+ggplot(aes(x = Age), data=data) +
+        geom_histogram(binwidth=1, color='black', fill = "#F79420") +
+        scale_x_continuous(limits=c(20,90), breaks=seq(20,90,5)) +
+        xlab("Age") +
+        ylab("No of people by age")
+```
+
+
+Most of the subjects are in between the ages 21 - 30
+
+
+```{r}
+# Barplot by Age_Cat
+ggplot(aes(x = Age_Cat), data = data) +
+            geom_bar(fill='steelblue')
+```
+
+
+```{r}
+# box plot of Age_Cat vs BMI
+
+ggplot(aes(x=Age_Cat, y = BMI), data = data) +
+        geom_boxplot() +
+        coord_cartesian(ylim = c(0,70))
+```
+
+```{r}
+by(data$BMI, data$Age_Cat, summary)
+```
+
+
+
+
+Machine Learning Model
+
+
+1) Decision Tree Model
+```{r}
+
+data = subset(data, select=-c(Age_Cat))
+```
+
+
+```{r}
+set.seed(7)
+dindex <- createDataPartition(data$Outcome, p=0.7, list=FALSE)
+data_train <- data[dindex,]
+data_test <- data[-dindex,]
+```
+
+
+
+```{r}
+
+model_dt <- ctree(Outcome~., data_train)
+plot(model_dt)
+
+```
+
+
+
+```{r}
+plot(model_dt, type = "simple")
+```
+
+we can see the number of nodes and its distribution. In which :
+s
+[1] is root node
+
+[2],[3],[6],[8], [11], and [13] are internal nodes or branch. Internal nodes shown by arrow pointing to/from them.
+
+[4],[5],[7],[9], [10], [12], [14], [15] are leaf nodes or leaf.
+
+
+
+The model above we can apply to our data test.
+```{r}
+
+pred_dt <- predict(model_dt, data_test)
+
+```
+
+
+```{r}
+(conf_matrix_dtree <- table(pred_dt, data_test$Outcome))
+```
+Result of confusion Matrix shows that decision tree predicts 125 cases negative diabetes correctly and 36 cases with wrong prediction. At the same time, this model predicts that there are 44 positive diabetes correctly and 25 cases of wrong prediction.
+
+
+
+```{r}
+caret::confusionMatrix(pred_dt, data_test[,9], mode="everything")
+```
+The Accuracy of Model is 73% for Decision Tree.
+
+
+
+
+
+
+2) Random Forest Model
+
+The model will be built using 5-fold cross validation, and 3 repeats
+```{r}
+# train() to make model, method = to use k-fold, repeats= to show the best 3 value of mytr
+ctrl <- trainControl(method = "repeatedcv", number =5, repeats = 3) 
+
+
+model_forest <- train(Outcome~., data=data_train, method="rf", trControl=ctrl)
+
+```
+
+
+```{r}
+plot(model_forest)
+```
+
+
+```{r}
+varImp(model_forest)
+```
+
+
+Based on result above, we know that glucose rate has the highest impact to the result while the other variables are only 50% or less than it.
+
+
+```{r}
+plot(model_forest$finalModel)
+legend("topright", colnames(model_forest$finalModel$err.rate),
+       col=1:6, cex= 0.8, fill=1:6)
+```
+
+Based on visualization above comparison of OOB and targeted variable. It depicts that from tree number around 100 the error of model has been better, yet we can still use more than 400 trees to reduce our OOB.
+
+
+```{r}
+model_forest$finalModel
+```
+
+
+```{r}
+predict_forest <- predict(model_forest, data_test)
+```
+
+
+```{r}
+(conf_matrix_forest1 <- table(predict_forest, data_test$Outcome))
+```
+Result of confusion Matrix shows that decision tree predicts 124 cases negative diabetes correctly and 33 cases with wrong prediction. At the same time, this model predicts that there are 47 positive diabetes correctly and 26 cases of wrong prediction.
+
+
+
+```{r}
+confusionMatrix(conf_matrix_forest1,, mode="everything")
+```
+
+Glucose is variable that most impact to diabetes, and followed by age, pedigree and pressure.
+The Accuracy of Random Forest Model is 74%
+
+
+
+
+
+3) Support Vector Machine
+```{r}
+svm.model <- svm(Outcome~., data = data_train, kernel="sigmoid")
+svm.pred <- predict(svm.model, data_test)
+```
+
+```{r}
+cm_svm <- confusionMatrix(svm.pred, data_test$Outcome, positive = "X1", mode="everything")
+cm_svm
+```
+Result of confusion Matrix shows that Support Vector Machine predicts 126 cases negative diabetes correctly and 33 cases with wrong prediction. At the same time, this model predicts that there are 47 positive diabetes correctly and 24 cases of wrong prediction.
+
+The Accuracy of Support Vector Machine is 75%
+
+
+
+
+4) Logistic Regression
+
+```{r}
+fitControl <- trainControl(method = "cv", number = 10, classProbs = TRUE, summaryFunction = twoClassSummary)
+model_glm <- train(Outcome~., data_train, 
+                   method = "glm", 
+                   metric = "ROC", 
+                   preProcess = c('center','scale'),
+                   trControl=fitControl)
+
+```
+
+
+```{r}
+pred_glm <- predict(model_glm, data_test)
+cm_glm <- confusionMatrix(pred_glm, data_test$Outcome, positive = "X1", mode="everything")
+cm_glm
+```
+
+Result of confusion Matrix shows that Logistic Regression predicts 129 cases negative diabetes correctly and 29 cases with wrong prediction. At the same time, this model predicts that there are 51 positive diabetes correctly and 21 cases of wrong prediction
+
+
+
+```{r}
+pred_prob_glm <- predict(model_glm, data_test, type="prob")
+roc_glm <- roc(data_test$Outcome, pred_prob_glm$X1)
+colAUC(pred_prob_glm$X1, data_test$Outcome, plotROC = TRUE)
+```
+We can see the result of this model:
+
+The accuracy is the best.
+The auc has a value of 0.81
+The F1 score is 0.65
+The recall (Sensitivity) is okay:- 0.6375
+
+
+Based on order accuracy and recall value, Logistic Regression model is the best classification model, with accuracy level of 78% and recall level 63%
+
+
+
+
+
+
+
+
+
+
+
+
